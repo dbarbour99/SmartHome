@@ -15,15 +15,7 @@
 #include "Adafruit_BME280.h"
 #include "Graphic.h"
 #include "Button.h"
-#include "encoder.h"
 #include "wemo.h"
-
-//encoder setup
-const int PINA = D8;
-const int PINB = D9;
-const int BUTTONPIN = D3;
-Encoder myEnc (PINA , PINB );
-Button encButton(BUTTONPIN,true);
 
 //joystick setup
 const int joyHorz = A1;
@@ -52,7 +44,7 @@ IoTTimer waitTimer;
 int waitedTime=0;
 
 //Motion detector
-const int DETECTPIN=D8;
+const int DETECTPIN=D9;
 bool motionDetected=false;
 
 //wemo
@@ -61,6 +53,7 @@ int wemoHeat=2;
 
 //hue light bulb
 const int BULB=3;
+bool sendCmdToHue = true;
 
 //debugging button
 Button debugButton(D4,false);
@@ -68,6 +61,7 @@ Button debugButton(D4,false);
 void PixelFill(int startPixel, int endPixel, int theColor);
 void setPixelDisplay(int theState);
 void programLogic();
+void SetHueOnce(int LightNum,bool HueON,int HueColor,int HueBright, int HueSat);
 
 int encPosition;
 int lastEncPosition;
@@ -76,6 +70,8 @@ int applicationState=0;
 int prevApplicationState;
 int setupState=0;
 int subSetupState=0;
+bool forceHeat = false;
+bool forceCool = false;
 
 bool setVertDown = false;
 bool setVertUp = false;
@@ -156,35 +152,58 @@ void programLogic()
     //this is for debugging only
     if (debugButton.isClicked()==true)
     {
-        Serial.printf("Start %i, Temp %0.1f%cF\n\n",0,currentTemp,248);
+        //Serial.printf("Start %i, Temp %0.1f%cF\n\n",0,currentTemp,248);
+        Serial.printf("Application %i, SetupState %i\n",applicationState,setupState);
     }
 
+    //determine what state you should be in
     prevApplicationState = applicationState;
-    if(currentTemp>coolingTemp && applicationState>1)
+    if(forceCool+forceHeat >0)
     {
-        if (motionDetected==true)
+        if (forceCool==true)
         {
+            forceHeat=false;
             applicationState=3;
+            setupState=0;
         }
-        else
+        if (forceHeat==true)
         {
-            applicationState=2;
+            forceCool = false;
+            applicationState = 5;
+            setupState=0;
         }
     }
 
-    //when you're in running mode
-    //if the temperature goes below the heating temp, turn on 
-    if(currentTemp<heatingTemp && applicationState>1)
-    {
-        if (motionDetected==true)
-        {
-            applicationState=5;
+    else
+    {  
+        //go throught the temperature and motion settings
+        if(currentTemp>coolingTemp && applicationState>1)
+        {   
+            if (motionDetected==true)
+            {
+                applicationState=3;
+            }
+            else
+            {
+                applicationState=2;
+            }
         }
-        else
+
+        //when you're in running mode
+        //if the temperature goes below the heating temp, turn on 
+        if(currentTemp<heatingTemp && applicationState>1)
         {
-            applicationState=4;
+            if (motionDetected==true)
+            {
+                applicationState=5;
+            }
+            else
+            {
+                applicationState=4;
+            }
         }
     }
+
 
     //only update the display if something changes
     if(applicationState!=prevApplicationState){showDisplay=true;}
@@ -216,10 +235,14 @@ void programLogic()
         //if user clicks on button, start  running process
         if (joyButton.isPressed()==true)
         {
+            Serial.print("Push joystick button");
             applicationState=1;
             showDisplay=true;
         }
 
+        //set these back to default off
+        forceHeat = false;
+        forceCool = false;
         break;
     
     case 1:  
@@ -274,6 +297,11 @@ void programLogic()
                 setupState = 1;
                 showDisplay=true;
             }
+            
+            //set these back to default off
+            forceHeat = false;
+            forceCool = false;
+
             break;
 
         case 1:
@@ -395,10 +423,54 @@ void programLogic()
                 showDisplay=true;
             }
 
+            //Right, go to manual screen
+            if(newHor>3000){setHorRight=true;}
+            if(newHor<3000 && setHorRight==true)
+            {
+                setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+                setupState = 3;
+                showDisplay=true;
+            }
 
             break;
         
-        default:
+        case 3:
+            //manual heat or cool
+            if(showDisplay)
+            {
+                display.clearDisplay();
+                display.drawBitmap(9, 5,graphic_hotcold,110,51, 1);
+                display.setTextColor(WHITE);
+                display.display();
+                showDisplay=false;
+            }
+
+            //UP, start heat
+            if(newVer<1000){setVertDown=true;}
+            if(newVer>1000 && setVertDown==true)
+            {
+                setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+                forceHeat = true;
+                showDisplay=true;
+            }
+
+            //DOWN, start cooling
+            if(newVer>3000){setVertUp=true;}
+            if(newVer<3000 && setVertUp==true)
+            {
+                setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+                forceCool = true;
+                showDisplay=true;
+            }
+
+            //LEFT, to the heat temp screen
+            if(newHor<1000){setHorLeft=true;}
+            if(newHor>1000 && setHorLeft==true)
+            {
+                setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+                setupState = 2;
+                showDisplay=true;
+            }
             break;
         }
         break;
@@ -478,11 +550,13 @@ void programLogic()
         if(newHor<1000){setHorLeft=true;}
         if(newHor>1000 && setHorLeft==true)
         {
+            Serial.print("Cooling left button");
             setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
             applicationState = 1;
             setupState=0;
             waitedTime = 0;
             motionDetected=false;
+            forceCool=false;
             showDisplay=true;
         }
 
@@ -536,12 +610,6 @@ void programLogic()
         setPixelDisplay(5);
         newHor = analogRead(joyHorz);
         
-        //this is for debugging only
-        // if (debugButton.isClicked()==true)
-        // {
-        //     Serial.printf("Temp %i, temp %i\r",applicationState,currentTemp);
-        // }
-
         //tell the user, it's cooling
         if(showDisplay)
         {
@@ -561,11 +629,13 @@ void programLogic()
         if(newHor<1000){setHorLeft=true;}
         if(newHor>1000 && setHorLeft==true)
         {
+            Serial.print("Heating left button");
             setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
             applicationState = 1;
             setupState=0;
             waitedTime = 0;
             motionDetected=false;
+            forceHeat=false;
             showDisplay=true;
         }
 
@@ -591,7 +661,7 @@ void setPixelDisplay(int theState)
             //bed is off
             pixel.clear();
             pixel.show();
-            setHue(BULB,false);
+            setHue(BULB,false,0,0,0);
             break;
 
         case 1:  
@@ -603,17 +673,16 @@ void setPixelDisplay(int theState)
                 if (onOff==true)
                 {
                     PixelFill(0,PIXELCOUNT-1,white);
-                    setHue(BULB,true,HueOrange,200,255);
+                    setHue(BULB,true,HueOrange,200,10);
                 }
                 else
                 {
                     pixel.clear();
-                    setHue(BULB,false);
+                    setHue(BULB,false,0,0,0);
                 }
                 pixel.show();
                 lastSwitch = millis();
             }
-            
             break;
 
         case 2: 
@@ -654,81 +723,11 @@ void setPixelDisplay(int theState)
             //bed is off
             pixel.clear();
             pixel.show();
-            setHue(BULB,false);
+            setHue(BULB,false,0,0,0);
             break;
-
     }
 
 }
-
-// void pixelState(int theState)
-// {
-//     static int lastSwitch;
-//     static bool onOff;
-//     int brightNess;
-
-//     switch (theState)
-//     {
-//         case 0:  
-//             //setup mode  (blinking white every second)
-//             if(millis()-lastSwitch>500)
-//             {
-//                 pixel.setBrightness(10);
-//                 onOff = !onOff;
-//                 if (onOff==true)
-//                 {
-//                     PixelFill(0,PIXELCOUNT-1,orange);
-//                 }
-//                 else
-//                 {
-//                     pixel.clear();
-//                 }
-//                 pixel.show();
-//                 lastSwitch = millis();
-//             }
-            
-//             break;
-
-//         case 1: 
-//             // bed is ready to be cold (breath blue)
-//             PixelFill(0,PIXELCOUNT-1,blue);
-//             int brightNess = 7 * sin(2.0*M_PI*(2.0/5.0)*millis()/1000.0)+ 10;
-//             pixel.setBrightness(brightNess);
-//             pixel.show();
-//             break;
-
-//         case 2:
-//             //bedi is in cold mode (steady blue)
-//             PixelFill(0,PIXELCOUNT-1,blue);
-//             pixel.setBrightness(20);
-//             pixel.show();
-//             break;
-//         // case 2:
-//         //     PixelFill(0,PIXELCOUNT-1,blue);
-//         //     pixel.setBrightness(10);
-//         //     pixel.show();
-//         //     break;
-        
-//         // case 3:
-//         //     PixelFill(0,PIXELCOUNT-1,yellow);
-//         //     brightNess = 7 * sin(2.0*M_PI*(2.0/5.0)*millis()/1000.0)+ 10;
-//         //     pixel.setBrightness(brightNess);
-//         //     pixel.show();
-//         //     break;
-
-//         // case 4:
-//         //     PixelFill(0,PIXELCOUNT-1,yellow);
-//         //     pixel.setBrightness(10);
-//         //     pixel.show();
-//         //     break;
-
-//         // default:
-//         //     pixel.clear();
-//         //     pixel.show();
-//         //     break;
-//     }
-// }
-
 
 void PixelFill(int startPixel, int endPixel, int theColor)
 {
@@ -737,4 +736,31 @@ void PixelFill(int startPixel, int endPixel, int theColor)
   {
     pixel.setPixelColor(theLoop,theColor);
   }
+}
+
+void SetHueOnce(int LightNum,bool HueON,int HueColor,int HueBright, int HueSat)
+{
+    static int oldLightNum;
+    static bool oldHueOn;
+    static int oldHueColor;
+    static int oldHueBright;
+    static int oldHueSat;
+    
+    if ( LightNum!=oldLightNum | hueOn!=oldHueOn | HueColor!=oldHueColor | HueBright!=oldHueBright | HueSat!=oldHueSat)
+    {
+        if(HueColor+HueBright+HueSat == 0)
+        {
+            setHue(LightNum,hueOn);
+        }
+        else
+        {
+            setHue(LightNum,hueOn,HueColor,HueBright,HueSat);
+        }
+        
+        oldLightNum = LightNum;
+        oldHueOn = hueOn;
+        oldHueColor = HueColor;
+        oldHueBright = HueBright;
+        oldHueSat = HueSat;
+    }
 }
