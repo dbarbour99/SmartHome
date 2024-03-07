@@ -63,13 +63,11 @@ void setPixelDisplay(int theState);
 void programLogic();
 void SetHueOnce(int LightNum,bool HueON,int HueColor,int HueBright, int HueSat);
 
-int encPosition;
-int lastEncPosition;
-
 int applicationState=0;
 int prevApplicationState;
 int setupState=0;
 int subSetupState=0;
+
 bool forceHeat = false;
 bool forceCool = false;
 
@@ -78,25 +76,25 @@ bool setVertUp = false;
 bool setHorRight = false;
 bool setHorLeft = false;
 
-int coolingTemp = 80;
-int heatingTemp = 75;
+float coolingTemp = 74;
+float heatingTemp = 73;
 
 SYSTEM_MODE(MANUAL);
 
 void setup() {
 
+    //start serial monitor
+    Serial.begin(9600);
+    waitFor (Serial.isConnected,10000);
+
     //turn on wi fi
     WiFi.on();
     WiFi.clearCredentials();
     WiFi.setCredentials("IoTNetwork");
-    
     WiFi.connect();
     while(WiFi.connecting()) {
-    Serial.printf(".");}
-
-    //start serial monitor
-    Serial.begin(9600);
-    waitFor (Serial.isConnected,10000);
+        delay(50);
+        Serial.printf(".");}
 
     //start the display
     display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -123,16 +121,9 @@ void setup() {
 
 void loop() {
 
-    // bool gotMotion = digitalRead(DETECTPIN);
-    // if(gotMotion==true)
-    // {
-    //     Serial.printf("Motion %i \r",gotMotion);
-    // }
-
     programLogic();
 
- 
-}
+ }
 
 void programLogic()
 {
@@ -142,42 +133,42 @@ void programLogic()
     // 1 - setup mode
     // 2 - waiting to cool
     // 3 - cooling
-    // 4 - waiting to head
+    // 4 - waiting to heat
     // 5 - heating
 
-    //when you're in running mode
-    //if the temperature goes above the cooling temperature turn on the fan
+    //read the temperature
     currentTemp = (bme.readTemperature ()*9/5)+32.0; // deg F
 
     //this is for debugging only
     if (debugButton.isClicked()==true)
     {
         //Serial.printf("Start %i, Temp %0.1f%cF\n\n",0,currentTemp,248);
-        Serial.printf("Application %i, SetupState %i\n",applicationState,setupState);
+        Serial.printf("Application %i, SetupState %i \n",applicationState,setupState);
+        Serial.printf("Forcecool %i, forceheat %i motion %i\n",forceCool,forceHeat,motionDetected);
+        Serial.printf("Currenttemp %f, cooltemp %f heatingtemp %f\n",currentTemp,coolingTemp,heatingTemp);
+        Serial.printf("\n");
     }
 
     //determine what state you should be in
     prevApplicationState = applicationState;
-    if(forceCool+forceHeat >0)
+    if (forceCool==true)
     {
-        if (forceCool==true)
-        {
-            forceHeat=false;
-            applicationState=3;
-            setupState=0;
-        }
-        if (forceHeat==true)
-        {
-            forceCool = false;
-            applicationState = 5;
-            setupState=0;
-        }
+        forceHeat=false;
+        applicationState=3;
+        setupState=0;
+    }
+    if (forceHeat==true)
+    {
+        forceCool = false;
+        applicationState = 5;
+        setupState=0;
     }
 
-    else
+    //when you're in running mode
+    if(forceCool==false && forceHeat==false && applicationState>1)
     {  
         //go throught the temperature and motion settings
-        if(currentTemp>coolingTemp && applicationState>1)
+        if(currentTemp>=coolingTemp)
         {   
             if (motionDetected==true)
             {
@@ -188,10 +179,9 @@ void programLogic()
                 applicationState=2;
             }
         }
-
-        //when you're in running mode
+        
         //if the temperature goes below the heating temp, turn on 
-        if(currentTemp<heatingTemp && applicationState>1)
+        if(currentTemp<heatingTemp)
         {
             if (motionDetected==true)
             {
@@ -319,7 +309,7 @@ void programLogic()
 
                 display.setTextSize(2);
                 display.setCursor(60,25);
-                display.printf("%i",coolingTemp);
+                display.printf("%.0f",coolingTemp);
                 display.display();
                 showDisplay=false;
             }
@@ -350,7 +340,7 @@ void programLogic()
                 coolingTemp--;
 
                 //keep the temps from overlapping
-                if(heatingTemp>=coolingTemp){heatingTemp=coolingTemp-1;}
+                if(heatingTemp>=coolingTemp){heatingTemp=coolingTemp-1.0;}
 
                 showDisplay=true;
             }
@@ -363,7 +353,7 @@ void programLogic()
                 coolingTemp++;
 
                 //keep the temps from overlapping
-                if(heatingTemp>=coolingTemp){heatingTemp=coolingTemp-1;}
+                if(heatingTemp>=coolingTemp){heatingTemp=coolingTemp-1.0;}
 
                 showDisplay=true;
             }
@@ -383,7 +373,7 @@ void programLogic()
 
                 display.setTextSize(2);
                 display.setCursor(60,25);
-                display.printf("%i",heatingTemp);
+                display.printf("%.0f",heatingTemp);
                 display.display();
                 showDisplay=false;
             }
@@ -405,7 +395,7 @@ void programLogic()
                 heatingTemp--;
 
                 //keep the temps from overlapping
-                if(heatingTemp>=coolingTemp){coolingTemp=heatingTemp+1;}
+                if(heatingTemp>=coolingTemp){coolingTemp=heatingTemp+1.0;}
 
                 showDisplay=true;
             }
@@ -418,7 +408,7 @@ void programLogic()
                 heatingTemp++;
 
                 //keep the temps from overlapping
-                if(heatingTemp>=coolingTemp){coolingTemp=heatingTemp+1;}
+                if(heatingTemp>=coolingTemp){coolingTemp=heatingTemp+1.0;}
 
                 showDisplay=true;
             }
@@ -508,6 +498,7 @@ void programLogic()
                 display.display();
                 waitedTime++;
                 waitTimer.startTimer(1000); 
+                forceCool=false;forceHeat=false;
             }
         }
         else
@@ -518,18 +509,27 @@ void programLogic()
             motionDetected = digitalRead(DETECTPIN);
         }
 
+        //LEFT, go back to setup screen
+        if(newHor<1000){setHorLeft=true;}
+        if(newHor>1000 && setHorLeft==true)
+        {
+            //Serial.print("Cooling left button");
+            setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+            applicationState = 1;
+            setupState=0;
+            waitedTime = 0;
+            motionDetected=false;
+            showDisplay=true;
+            forceCool=false;forceHeat=false;
+        }
+
+
         break;
 
 
     case 3:  //Cooling
         setPixelDisplay(3);
         newHor = analogRead(joyHorz);
-
-         //this is for debugging only
-        // if (debugButton.isClicked()==true)
-        // {
-        //     Serial.printf("Temp %i, temp %i\r",applicationState,currentTemp);
-        // }
 
         //tell the user, it's cooling
         if(showDisplay)
@@ -550,14 +550,13 @@ void programLogic()
         if(newHor<1000){setHorLeft=true;}
         if(newHor>1000 && setHorLeft==true)
         {
-            Serial.print("Cooling left button");
             setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
             applicationState = 1;
             setupState=0;
             waitedTime = 0;
             motionDetected=false;
-            forceCool=false;
             showDisplay=true;
+            forceCool=false;forceHeat=false;
         }
 
         break;
@@ -602,6 +601,19 @@ void programLogic()
             display.fillRect(50,20, 70,30,BLACK);
             display.display();
             motionDetected = digitalRead(DETECTPIN);
+        }
+
+        //LEFT, go back to setup screen
+        if(newHor<1000){setHorLeft=true;}
+        if(newHor>1000 && setHorLeft==true)
+        {
+            setHorRight = false;setHorLeft= false;setVertDown=false;setVertUp=false;
+            applicationState = 1;
+            setupState=0;
+            waitedTime = 0;
+            motionDetected=false;
+            showDisplay=true;
+            forceCool=false;forceHeat=false;
         }
 
         break;
@@ -654,6 +666,7 @@ void setPixelDisplay(int theState)
     static int lastSwitch;
     static bool onOff;
     int brightNess;
+    bool useHue = false;
 
     switch (theState)
     {
@@ -661,7 +674,7 @@ void setPixelDisplay(int theState)
             //bed is off
             pixel.clear();
             pixel.show();
-            setHue(BULB,false,0,0,0);
+            if (useHue) {(BULB,false,0,0,0);}
             break;
 
         case 1:  
@@ -673,12 +686,12 @@ void setPixelDisplay(int theState)
                 if (onOff==true)
                 {
                     PixelFill(0,PIXELCOUNT-1,white);
-                    setHue(BULB,true,HueOrange,200,10);
+                    if (useHue) {setHue(BULB,true,HueOrange,75,10);}
                 }
                 else
                 {
                     pixel.clear();
-                    setHue(BULB,false,0,0,0);
+                    if (useHue) {setHue(BULB,false,0,0,0);}
                 }
                 pixel.show();
                 lastSwitch = millis();
@@ -691,7 +704,7 @@ void setPixelDisplay(int theState)
             brightNess = 7 * sin(2.0*M_PI*(2.0/5.0)*millis()/1000.0)+ 10;
             pixel.setBrightness(brightNess);
             pixel.show();
-            setHue(BULB,true,HueBlue,brightNess,255);
+            if (useHue) {setHue(BULB,true,HueBlue,brightNess,255);}
             break;
 
         case 3:
@@ -699,7 +712,7 @@ void setPixelDisplay(int theState)
             PixelFill(0,PIXELCOUNT-1,blue);
             pixel.setBrightness(40);
             pixel.show();
-            setHue(BULB,true,HueBlue,100,255);
+            if (useHue) {setHue(BULB,true,HueBlue,100,255);}
             break;
 
         case 4:
@@ -708,7 +721,7 @@ void setPixelDisplay(int theState)
             brightNess = 7 * sin(2.0*M_PI*(2.0/5.0)*millis()/1000.0)+ 10;
             pixel.setBrightness(brightNess);
             pixel.show();
-            setHue(BULB,true,HueYellow,brightNess,255);
+            if (useHue) {setHue(BULB,true,HueYellow,brightNess,255);}
             break;
 
         case 5:
@@ -716,14 +729,14 @@ void setPixelDisplay(int theState)
             PixelFill(0,PIXELCOUNT-1,yellow);
             pixel.setBrightness(40);
             pixel.show();
-            setHue(BULB,true,HueYellow,100,255);
+            if (useHue) {setHue(BULB,true,HueYellow,100,255);}
             break;
 
         default:
             //bed is off
             pixel.clear();
             pixel.show();
-            setHue(BULB,false,0,0,0);
+            if (useHue) {setHue(BULB,false,0,0,0);}
             break;
     }
 
